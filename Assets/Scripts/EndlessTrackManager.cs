@@ -2,15 +2,26 @@ using System.Collections.Generic;
 using UnityEngine;
 
 public enum BiomeType { City, Forest }
+public enum CoinPattern { Line, JumpArc, RampArc }
 
 public class EndlessTrackManager : MonoBehaviour
 {
     [Header("Player & Track Dimensions")]
     public Transform playerTransform;
-    [Tooltip("Exact Z-length of your CityGround prefab (e.g., 23.8)")]
     public float tileLength = 23.8f;
     public int visibleTilesOnScreen = 7;
     public float laneDistance = 2.25f;
+
+    [Header("Collectibles & Coin Settings")]
+    public GameObject[] coinPrefabs;
+    public float coinSpacingZ = 1.8f;
+    public float arcCoinSpacingZ = 0.9f;
+    public float groundCoinY = 0.8f;
+    public float roofCoinY = 4.3f;
+    public float rampCoinsOffsetZ = -16f;
+    public float roofCoinsOffsetZ = -11f;
+    public float jumpArcHeight = 2.2f;
+    [Range(0f, 1f)] public float coinSpawnChance = 0.75f;
 
     [Header("Biome Ground Prefabs")]
     public GameObject cityGroundPrefab;
@@ -18,31 +29,31 @@ public class EndlessTrackManager : MonoBehaviour
     public GameObject tunnelPrefab;
     public int tilesBeforeTunnel = 10;
 
-    [Header("City Obstacles (Cars, Trucks vs. Barriers, Cones)")]
-    [Tooltip("Tall/Long obstacles that MUST be dodged by switching lanes (Cars, Trucks, Buses)")]
+    [Header("City Obstacles (Short)")]
     public GameObject[] cityFullBlocks;
-    [Tooltip("Obstacles that can be jumped over or slid under (Barriers, Cones, Low Fences)")]
     public GameObject[] cityPassables;
 
-    [Header("Forest Obstacles")]
-    public GameObject[] forestFullBlocks;
-    public GameObject[] forestPassables;
+    [Header("City Obstacles (Long / Elevated)")]
+    [Tooltip("Trucks with ramps on the back")]
+    public GameObject[] cityRampVehicles;
+    [Tooltip("Flat-roof trucks without ramps to form the convoy bridge")]
+    public GameObject[] cityLongVehicles;
 
-    [Header("Collectibles")]
-    public GameObject[] coinPrefabs;
-
-    [Header("Subway Surfers Style Sequence Settings")]
-    [Tooltip("Z distance where the very first obstacle appears in front of the player")]
+    [Header("Sequence Settings (Dynamic Z-Spacing)")]
     public float firstObstacleStartZ = 18f;
-    [Tooltip("Short breathing gap between obstacle clusters")]
     public float minGapBetweenSequences = 8f;
     public float maxGapBetweenSequences = 14f;
-    [Tooltip("Z distance between obstacles inside the same sequence")]
-    public float minStepDistanceZ = 7f;
-    public float maxStepDistanceZ = 11f;
-    [Range(0f, 1f)]
-    [Tooltip("Chance to add a slight breathing zone")]
-    public float breathingZoneChance = 0.05f;
+
+    [Tooltip("Spacing for normal cars and barriers")]
+    public float minNormalStepZ = 14f;
+    public float maxNormalStepZ = 18f;
+
+    [Tooltip("Spacing strictly for long trucks and convoys to prevent clipping")]
+    public float minLongStepZ = 20f;
+    public float maxLongStepZ = 26f;
+
+    [Range(0f, 1f)] public float breathingZoneChance = 0.05f;
+    [Range(0f, 1f)] public float elevatedConvoyChance = 0.25f;
 
     private BiomeType currentBiome = BiomeType.City;
     private float nextTileSpawnZ = 0f;
@@ -55,12 +66,9 @@ public class EndlessTrackManager : MonoBehaviour
 
     private void Start()
     {
-        // Force a sensible minimum start distance even if a negative value was set in the Inspector
         nextSequenceZ = Mathf.Max(15f, firstObstacleStartZ);
-
         for (int i = 0; i < visibleTilesOnScreen; i++)
         {
-            // Allow obstacles right from the first tile (since nextSequenceZ already protects the player's start spot)
             SpawnNextGroundTile(true);
         }
     }
@@ -74,7 +82,6 @@ public class EndlessTrackManager : MonoBehaviour
             RecycleOldestGroundTile();
             SpawnNextGroundTile(true);
         }
-
         CleanupPassedItems();
     }
 
@@ -93,9 +100,7 @@ public class EndlessTrackManager : MonoBehaviour
         else
         {
             GameObject targetPrefab = (currentBiome == BiomeType.City || forestGroundPrefab == null)
-                ? cityGroundPrefab
-                : forestGroundPrefab;
-
+                ? cityGroundPrefab : forestGroundPrefab;
             tileToSpawn = ObjectPooler.Instance.GetPooledItem(targetPrefab);
         }
 
@@ -115,12 +120,7 @@ public class EndlessTrackManager : MonoBehaviour
             {
                 float sequenceLength = SpawnSubwaySurfersSequence(nextSequenceZ);
                 float gap = Random.Range(minGapBetweenSequences, maxGapBetweenSequences);
-
-                if (Random.value < breathingZoneChance)
-                {
-                    gap += Random.Range(8f, 14f);
-                }
-
+                if (Random.value < breathingZoneChance) gap += Random.Range(8f, 14f);
                 nextSequenceZ += sequenceLength + gap;
             }
             else
@@ -128,75 +128,166 @@ public class EndlessTrackManager : MonoBehaviour
                 nextSequenceZ = tileEndZ + 5f;
             }
         }
-
         nextTileSpawnZ += tileLength;
     }
 
     private float SpawnSubwaySurfersSequence(float startZ)
     {
-        GameObject[] fullBlocks = (currentBiome == BiomeType.City) ? cityFullBlocks : forestFullBlocks;
-        GameObject[] passables = (currentBiome == BiomeType.City) ? cityPassables : forestPassables;
+        bool hasFullBlocks = cityFullBlocks != null && cityFullBlocks.Length > 0;
+        bool hasPassables = cityPassables != null && cityPassables.Length > 0;
+        bool hasRamps = cityRampVehicles != null && cityRampVehicles.Length > 0;
+        bool hasLongVehicles = cityLongVehicles != null && cityLongVehicles.Length > 0;
 
-        bool hasFullBlocks = fullBlocks != null && fullBlocks.Length > 0;
-        bool hasPassables = passables != null && passables.Length > 0;
+        if (!hasFullBlocks) return 10f;
 
-        if (!hasFullBlocks && !hasPassables) return 10f;
-
-        // Each sequence has 2 to 4 close-quarters staggered steps
         int stepsInSequence = Random.Range(2, 5);
         float currentZ = startZ;
 
-        for (int step = 0; step < stepsInSequence; step++)
+        bool isElevatedConvoy = hasRamps && hasLongVehicles && (Random.value < elevatedConvoyChance);
+
+        // Lock a single lane for the entire elevated convoy so flat-roof trucks stay aligned behind the ramp truck
+        if (isElevatedConvoy)
         {
             lastSafeLane = GetNextReachableSafeLane(lastSafeLane);
+        }
 
-            // Pick a guaranteed non-safe lane to ensure at least 1 hazard ALWAYS spawns on this step
-            List<int> hazardLanes = new List<int>();
-            for (int l = 0; l < 3; l++)
+        for (int step = 0; step < stepsInSequence; step++)
+        {
+            float stepDistanceZ = isElevatedConvoy
+                ? Random.Range(minLongStepZ, maxLongStepZ)
+                : Random.Range(minNormalStepZ, maxNormalStepZ);
+
+            // Calculate maximum coins that fit inside this step without overlapping into the next step
+            int maxCoinsForStep = Mathf.Max(3, Mathf.FloorToInt((stepDistanceZ - 3.5f) / coinSpacingZ));
+
+            if (isElevatedConvoy)
             {
-                if (l != lastSafeLane) hazardLanes.Add(l);
+                // Push currentZ forward on step 0 so the backward-extending wooden ramp doesn't clip previous cars
+                if (step == 0)
+                {
+                    currentZ += 12f;
+                }
+
+                // Step 0 spawns the ramp truck; subsequent steps spawn flat-roof trucks in the exact same lane
+                GameObject roofPrefab = (step == 0) ? GetRandomPrefab(cityRampVehicles) : GetRandomPrefab(cityLongVehicles);
+                SpawnObstacleInLane(roofPrefab, lastSafeLane, currentZ);
+
+                if (step == 0)
+                {
+                    // Diagonal coin trail aligned with the rear wooden ramp using rampCoinsOffsetZ
+                    SpawnCoinTrail(lastSafeLane, currentZ + rampCoinsOffsetZ, 5, groundCoinY, CoinPattern.RampArc);
+                    // Flat coin trail along the roof of the first ramp truck using roofCoinsOffsetZ
+                    SpawnCoinTrail(lastSafeLane, currentZ + roofCoinsOffsetZ, 6, roofCoinY, CoinPattern.Line);
+                }
+                else
+                {
+                    // Flat coin trail strictly limited to 6-8 coins so they stay inside the container roof
+                    int roofCoinCount = Random.Range(6, 9);
+                    SpawnCoinTrail(lastSafeLane, currentZ + roofCoinsOffsetZ, roofCoinCount, roofCoinY, CoinPattern.Line);
+                }
+
+                // Spawn regular hazards in adjacent ground lanes aligned with the truck body
+                for (int l = 0; l < 3; l++)
+                {
+                    if (l != lastSafeLane && Random.value < 0.5f)
+                    {
+                        SpawnObstacleInLane(GetRandomPrefab(cityFullBlocks), l, currentZ - 6f + Random.Range(-2f, 2f));
+                    }
+                }
+            }
+            else
+            {
+                // Pick next reachable safe lane for ground navigation
+                lastSafeLane = GetNextReachableSafeLane(lastSafeLane);
+
+                List<int> hazardLanes = new List<int>();
+                for (int l = 0; l < 3; l++)
+                {
+                    if (l != lastSafeLane) hazardLanes.Add(l);
+                }
+
+                int guaranteedLane = hazardLanes[Random.Range(0, hazardLanes.Count)];
+                float zOffset1 = Random.Range(0f, 3.0f);
+
+                // Check if primary hazard is a jumpable barrier
+                bool primaryIsPassable = hasPassables && Random.value < 0.35f;
+                GameObject primaryPrefab = primaryIsPassable ? GetRandomPrefab(cityPassables) : GetRandomPrefab(cityFullBlocks);
+                SpawnObstacleInLane(primaryPrefab, guaranteedLane, currentZ + zOffset1);
+
+                // Secondary hazard lane
+                if (Random.value < 0.5f)
+                {
+                    int secondaryLane = hazardLanes[0] == guaranteedLane ? hazardLanes[1] : hazardLanes[0];
+                    float zOffset2 = Random.Range(0f, 3.0f);
+                    GameObject secondaryPrefab = (hasPassables && Random.value < 0.4f) ? GetRandomPrefab(cityPassables) : GetRandomPrefab(cityFullBlocks);
+                    SpawnObstacleInLane(secondaryPrefab, secondaryLane, currentZ + zOffset2);
+                }
+
+                // 30% chance to spawn a jumpable barrier in the safe lane with a centered JumpArc coin trail
+                bool spawnedPassableInSafeLane = false;
+                if (hasPassables && Random.value < 0.30f)
+                {
+                    float barrierZ = currentZ + 2.0f;
+                    SpawnObstacleInLane(GetRandomPrefab(cityPassables), lastSafeLane, barrierZ);
+                    spawnedPassableInSafeLane = true;
+
+                    // Center the 5-coin jump parabola directly over barrierZ using the shorter arcCoinSpacingZ
+                    float arcStartZ = barrierZ - (2f * arcCoinSpacingZ);
+                    SpawnCoinTrail(lastSafeLane, arcStartZ, 5, groundCoinY, CoinPattern.JumpArc);
+                }
+
+                // Otherwise, spawn a clean ground line of coins fitted to the current step length
+                if (!spawnedPassableInSafeLane && Random.value < coinSpawnChance)
+                {
+                    int coinCount = Random.Range(5, maxCoinsForStep + 1);
+                    SpawnCoinTrail(lastSafeLane, currentZ + 1.0f, coinCount, groundCoinY, CoinPattern.Line);
+                }
             }
 
-            int guaranteedLane = hazardLanes[Random.Range(0, hazardLanes.Count)];
-            int secondaryLane = hazardLanes[0] == guaranteedLane ? hazardLanes[1] : hazardLanes[0];
-
-            // 1. Spawn on Guaranteed Hazard Lane (with random Z offset so it doesn't look like a grid)
-            float zOffset1 = Random.Range(-2.5f, 2.5f);
-            GameObject primaryPrefab = (hasFullBlocks && Random.value < 0.65f)
-                ? GetRandomPrefab(fullBlocks)
-                : GetRandomPrefab(passables);
-
-            SpawnObstacleInLane(primaryPrefab, guaranteedLane, currentZ + zOffset1);
-
-            // 35% chance to place a warning cone/trap 4.5m in front of a full block car
-            if (primaryPrefab != null && hasFullBlocks && hasPassables && System.Array.IndexOf(fullBlocks, primaryPrefab) >= 0 && Random.value < 0.35f)
-            {
-                SpawnObstacleInLane(GetRandomPrefab(passables), guaranteedLane, currentZ + zOffset1 - 4.5f);
-            }
-
-            // 2. Spawn on Secondary Hazard Lane (75% chance, pushed forward/back in Z so they are staggered!)
-            if (Random.value < 0.75f)
-            {
-                // Intentionally offset Z from the primary obstacle so they form a diagonal rather than a flat line
-                float zOffset2 = (zOffset1 >= 0f) ? Random.Range(-3.5f, -1.0f) : Random.Range(1.0f, 3.5f);
-                GameObject secondaryPrefab = (hasFullBlocks && Random.value < 0.5f)
-                    ? GetRandomPrefab(fullBlocks)
-                    : GetRandomPrefab(passables);
-
-                SpawnObstacleInLane(secondaryPrefab, secondaryLane, currentZ + zOffset2);
-            }
-
-            // 3. Optional challenge in the Safe Lane (30% chance for a jumpable barrier/cone)
-            if (hasPassables && Random.value < 0.30f)
-            {
-                float safeZOffset = Random.Range(-1.5f, 2.0f);
-                SpawnObstacleInLane(GetRandomPrefab(passables), lastSafeLane, currentZ + safeZOffset);
-            }
-
-            currentZ += Random.Range(minStepDistanceZ, maxStepDistanceZ);
+            currentZ += stepDistanceZ;
         }
 
         return currentZ - startZ;
+    }
+
+    private void SpawnCoinTrail(int lane, float startZ, int coinCount, float startY, CoinPattern pattern)
+    {
+        if (coinPrefabs == null || coinPrefabs.Length == 0 || ObjectPooler.Instance == null) return;
+
+        float xPos = (lane - 1) * laneDistance;
+
+        // Use tighter spacing for JumpArc so the jump parabola is compact
+        float activeSpacingZ = (pattern == CoinPattern.JumpArc) ? arcCoinSpacingZ : coinSpacingZ;
+
+        for (int i = 0; i < coinCount; i++)
+        {
+            float currentZ = startZ + (i * activeSpacingZ);
+            float currentY = startY;
+
+            if (pattern == CoinPattern.JumpArc)
+            {
+                // Parabolic jump arc using Sine wave (peaks exactly at the middle coin)
+                float t = (coinCount > 1) ? (float)i / (coinCount - 1) : 0.5f;
+                currentY = startY + (Mathf.Sin(t * Mathf.PI) * jumpArcHeight);
+            }
+            else if (pattern == CoinPattern.RampArc)
+            {
+                // Linearly climbs from ground height to truck roof height
+                float t = (coinCount > 1) ? (float)i / (coinCount - 1) : 1f;
+                currentY = Mathf.Lerp(groundCoinY, roofCoinY, t);
+            }
+
+            Vector3 spawnPos = new Vector3(xPos, currentY, currentZ);
+            GameObject coin = ObjectPooler.Instance.GetPooledItem(coinPrefabs[0]);
+
+            if (coin != null)
+            {
+                coin.transform.position = spawnPos;
+                coin.transform.rotation = Quaternion.identity;
+                coin.SetActive(true);
+                activeObstaclesAndCoins.Add(coin);
+            }
+        }
     }
 
     private int GetNextReachableSafeLane(int currentSafe)
@@ -209,10 +300,8 @@ public class EndlessTrackManager : MonoBehaviour
     private void SpawnObstacleInLane(GameObject prefab, int lane, float zPos)
     {
         if (prefab == null || ObjectPooler.Instance == null) return;
-
         float xPos = (lane - 1) * laneDistance;
         Vector3 spawnPos = new Vector3(xPos, 0f, zPos);
-
         GameObject item = ObjectPooler.Instance.GetPooledItem(prefab);
         if (item != null)
         {
@@ -240,8 +329,8 @@ public class EndlessTrackManager : MonoBehaviour
 
     private void CleanupPassedItems()
     {
-        float destroyZThreshold = playerTransform.position.z - 18f;
-
+        // Increased to 35f so long trucks aren't recycled while the player is still on their rear ramp/roof
+        float destroyZThreshold = playerTransform.position.z - 35f;
         for (int i = activeObstaclesAndCoins.Count - 1; i >= 0; i--)
         {
             GameObject item = activeObstaclesAndCoins[i];

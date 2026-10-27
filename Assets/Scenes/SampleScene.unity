@@ -15,7 +15,7 @@ RenderSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 10
   m_Fog: 0
-  m_FogColor: {r: 0.5, g: 0.5, b: 0.5, a: 1}
+  m_FogColor: {r: 0.6725067, g: 1, b: 0.97160435, a: 1}
   m_FogMode: 3
   m_FogDensity: 0.01
   m_LinearFogStart: 0
@@ -1121,6 +1121,7 @@ GameObject:
   - component: {fileID: 1593200164}
   - component: {fileID: 1593200163}
   - component: {fileID: 1593200162}
+  - component: {fileID: 1593200165}
   m_Layer: 0
   m_Name: TrackManager
   m_TagString: Untagged
@@ -1144,6 +1145,16 @@ MonoBehaviour:
   tileLength: 23.8
   visibleTilesOnScreen: 7
   laneDistance: 2.25
+  coinPrefabs:
+  - {fileID: 188784, guid: 91efdc722c552794abb1c9e735761d9c, type: 3}
+  coinSpacingZ: 1
+  arcCoinSpacingZ: 1
+  groundCoinY: 0.8
+  roofCoinY: 4.9
+  rampCoinsOffsetZ: -13
+  roofCoinsOffsetZ: -6
+  jumpArcHeight: 2.2
+  coinSpawnChance: 0.75
   cityGroundPrefab: {fileID: 8918040616801548407, guid: 0f3f393296bc6f74a98df0ea26173f00, type: 3}
   forestGroundPrefab: {fileID: 0}
   tunnelPrefab: {fileID: 0}
@@ -1158,15 +1169,19 @@ MonoBehaviour:
   - {fileID: 113040, guid: a01b21fb2ecd9af44937908d2437c909, type: 3}
   - {fileID: 182468, guid: ad19c32574ecd15428af260d6878de81, type: 3}
   - {fileID: 3387216988986643223, guid: 2c5502bd130da6e489575efb95313761, type: 3}
-  forestFullBlocks: []
-  forestPassables: []
-  coinPrefabs: []
-  firstObstacleStartZ: -20
+  cityRampVehicles:
+  - {fileID: 6958708342477265845, guid: d183657635a4ee04f98d4fb1462fd0fe, type: 3}
+  cityLongVehicles:
+  - {fileID: 6958708342477265845, guid: aa80c60aaed47d7488a2493b1569e55b, type: 3}
+  firstObstacleStartZ: 20
   minGapBetweenSequences: 12
   maxGapBetweenSequences: 22
-  minStepDistanceZ: 5
-  maxStepDistanceZ: 10
+  minNormalStepZ: 14
+  maxNormalStepZ: 18
+  minLongStepZ: 20
+  maxLongStepZ: 20
   breathingZoneChance: 0.05
+  elevatedConvoyChance: 0.25
 --- !u!114 &1593200163
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1194,6 +1209,21 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1593200165
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1593200161}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6b9b8cc559840a14c81cf633c738a49f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CurvedWorld
+  globalCurveX: -0.0015
+  globalCurveY: 0.0019
+  globalFlatZoneZ: 12
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

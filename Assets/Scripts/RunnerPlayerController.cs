@@ -194,4 +194,26 @@ public class RunnerPlayerController : MonoBehaviour
             }
         }
     }
+
+    private void OnTriggerEnter(Collider col)
+    {
+        if (col.CompareTag("Obstacle"))
+        {
+            // 1. Trigger the visual death animation
+            if (animator != null)
+            {
+                animator.SetTrigger("Die");
+                animator.SetBool("gameStart", false); // Ensures the state machine exits the running animation
+            }
+
+            // 2. Notify the GameManager (which will open the Game Over UI and fire events)
+            if (GameManager.Instance != null)
+            {
+                GameManager.Instance.Die();
+            }
+
+            // Note: No "this.enabled = false" here. GameManager fires OnGameOver, 
+            // which calls StopRunning() in this script to set forwardSpeed to zero safely.
+        }
+    }
 }

@@ -32,7 +32,14 @@ Shader "Custom/URP/InvertedHullOutlineLowPoly"
             #pragma vertex vert
             #pragma fragment frag
             #pragma multi_compile_instancing
+            #pragma multi_compile_fog
+
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+            // Lê exatamente as mesmas variáveis globais da GPU que o CurvedWorld.hlsl!
+            float _GlobalCurveX;
+            float _GlobalCurveY;
+            float _GlobalFlatZoneZ;
 
             struct Attributes
             {
@@ -44,6 +51,7 @@ Shader "Custom/URP/InvertedHullOutlineLowPoly"
             struct Varyings
             {
                 float4 positionCS : SV_POSITION;
+                float fogFactor   : TEXCOORD0;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
@@ -61,22 +69,28 @@ Shader "Custom/URP/InvertedHullOutlineLowPoly"
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
 
-                // Calculate radial direction from the visual center of the mesh to prevent split gaps on sharp edges
                 float3 radialDir = normalize(input.positionOS.xyz - _CenterOffset.xyz);
                 float3 normalDir = normalize(input.normalOS);
-
-                // Blend between standard normals and radial direction to close gaps on low-poly corners
                 float3 extrudeDir = normalize(lerp(normalDir, radialDir, _HardEdgeBlend));
-
-                // Extrude vertices outward
                 float3 extrudedPosOS = input.positionOS.xyz + extrudeDir * _OutlineWidth;
-                float4 clipPos = TransformObjectToHClip(extrudedPosOS);
 
-                // Push the outline slightly back in depth (Z) so internal details are clean
+                float3 worldPos = TransformObjectToWorld(extrudedPosOS);
+                float3 baseWorldPos = GetAbsolutePositionWS(TransformObjectToWorld(input.positionOS.xyz));
+                float distZ = max(0.0, (baseWorldPos.z - _WorldSpaceCameraPos.z) - _GlobalFlatZoneZ);
+                float distSq = distZ * distZ;
+
+                worldPos.x += distSq * _GlobalCurveX;
+                worldPos.y -= distSq * _GlobalCurveY;
+
+                float3 curvedPosOS = TransformWorldToObject(worldPos);
+                float4 clipPos = TransformObjectToHClip(curvedPosOS);
+
+                output.fogFactor = ComputeFogFactor(clipPos.z);
+
                 #if UNITY_REVERSED_Z
-                    clipPos.z -= _ZOffset * 0.1;
+                    clipPos.z -= (_ZOffset * 0.01) * clipPos.w;
                 #else
-                    clipPos.z += _ZOffset * 0.1;
+                    clipPos.z += (_ZOffset * 0.01) * clipPos.w;
                 #endif
 
                 output.positionCS = clipPos;
@@ -85,7 +99,8 @@ Shader "Custom/URP/InvertedHullOutlineLowPoly"
 
             half4 frag(Varyings input) : SV_Target
             {
-                return _OutlineColor;
+                half3 finalColor = MixFog(_OutlineColor.rgb, input.fogFactor);
+                return half4(finalColor, _OutlineColor.a);
             }
             ENDHLSL
         }

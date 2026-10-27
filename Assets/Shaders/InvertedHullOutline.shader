@@ -28,8 +28,13 @@ Shader "Custom/URP/InvertedHullOutline"
             #pragma vertex vert
             #pragma fragment frag
             #pragma multi_compile_instancing
+            #pragma multi_compile_fog
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+            float _GlobalCurveX;
+            float _GlobalCurveY;
+            float _GlobalFlatZoneZ;
 
             struct Attributes
             {
@@ -41,6 +46,7 @@ Shader "Custom/URP/InvertedHullOutline"
             struct Varyings
             {
                 float4 positionCS : SV_POSITION;
+                float fogFactor   : TEXCOORD0;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
@@ -56,15 +62,25 @@ Shader "Custom/URP/InvertedHullOutline"
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
 
-                // Extrude vertices outward along their object-space normals
                 float3 extrudedPosOS = input.positionOS.xyz + normalize(input.normalOS) * _OutlineWidth;
-                float4 clipPos = TransformObjectToHClip(extrudedPosOS);
 
-                // Push the outline slightly back in depth (Z) so internal details (like eyes/snout creases) are hidden behind the body mesh
+                float3 worldPos = TransformObjectToWorld(extrudedPosOS);
+                float3 baseWorldPos = GetAbsolutePositionWS(TransformObjectToWorld(input.positionOS.xyz));
+                float distZ = max(0.0, (baseWorldPos.z - _WorldSpaceCameraPos.z) - _GlobalFlatZoneZ);
+                float distSq = distZ * distZ;
+
+                worldPos.x += distSq * _GlobalCurveX;
+                worldPos.y -= distSq * _GlobalCurveY;
+
+                float3 curvedPosOS = TransformWorldToObject(worldPos);
+                float4 clipPos = TransformObjectToHClip(curvedPosOS);
+
+                output.fogFactor = ComputeFogFactor(clipPos.z);
+
                 #if UNITY_REVERSED_Z
-                    clipPos.z -= _ZOffset * 0.1;
+                    clipPos.z -= (_ZOffset * 0.01) * clipPos.w;
                 #else
-                    clipPos.z += _ZOffset * 0.1;
+                    clipPos.z += (_ZOffset * 0.01) * clipPos.w;
                 #endif
 
                 output.positionCS = clipPos;
@@ -73,7 +89,8 @@ Shader "Custom/URP/InvertedHullOutline"
 
             half4 frag(Varyings input) : SV_Target
             {
-                return _OutlineColor;
+                half3 finalColor = MixFog(_OutlineColor.rgb, input.fogFactor);
+                return half4(finalColor, _OutlineColor.a);
             }
             ENDHLSL
         }
